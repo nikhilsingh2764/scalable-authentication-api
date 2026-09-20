@@ -1,76 +1,75 @@
 <div align="center">
 
-# 🔐 Authentication System
+# 🔐 Authentication API — OTP, JWT & Async Email
 
-**Email + OTP signup, JWT sessions with rotating refresh tokens, Google sign-in, and password recovery, built for a Node.js / Express API.**
+**A production-style authentication service with OTP email verification, rotating refresh tokens, account lockout, and background email delivery powered by BullMQ and Redis.**
 
 <p>
-  <img src="https://img.shields.io/badge/Node.js-20-339933?logo=nodedotjs&logoColor=white" alt="Node.js" />
-  <img src="https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white" alt="Express" />
-  <img src="https://img.shields.io/badge/JWT-Access%20%2B%20Refresh-000000?logo=jsonwebtokens&logoColor=white" alt="JWT" />
-  <img src="https://img.shields.io/badge/bcrypt-Password%20Hashing-blue" alt="bcrypt" />
-  <img src="https://img.shields.io/badge/Redis-OTP%20%2B%20Rate%20Limits-DC382D?logo=redis&logoColor=white" alt="Redis" />
-  <img src="https://img.shields.io/badge/Google-OAuth-4285F4?logo=google&logoColor=white" alt="Google OAuth" />
+  <a href="https://github.com/nikhilsingh2764/invoice-processing-and-async-email-automation-api/actions/workflows/ci.yml"><img src="https://github.com/nikhilsingh2764/invoice-processing-and-async-email-automation-api/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <img src="https://img.shields.io/badge/Node.js-20-339933?logo=nodedotjs&logoColor=white" alt="Node.js 20" />
+  <img src="https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white" alt="Express 5" />
+  <img src="https://img.shields.io/badge/MongoDB-Mongoose%209-47A248?logo=mongodb&logoColor=white" alt="MongoDB" />
+  <img src="https://img.shields.io/badge/Redis-BullMQ-DC382D?logo=redis&logoColor=white" alt="Redis and BullMQ" />
+  <img src="https://img.shields.io/badge/JWT-HttpOnly%20Cookies-000000?logo=jsonwebtokens&logoColor=white" alt="JWT" />
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/OpenAPI-Swagger-85EA2D?logo=swagger&logoColor=black" alt="Swagger" />
+</p>
+
+<p>
+  <a href="https://invoice-backend-drqr.onrender.com/api/v1/health">Live API</a> ·
+  <a href="https://invoice-backend-drqr.onrender.com/api-docs">Swagger Docs</a> ·
+  <a href="https://www.postman.com/technical-physicist-35686083-s-team/workspace/invoice-generator-api/collection/39798617-83cff721-5ce7-4e00-ba58-0d49017d3f39?action=share&creator=39798617">Postman Collection</a>
 </p>
 
 </div>
 
-This document covers only the **authentication and account system** of the [Invoice Processing & Async Email Automation API](https://github.com/nikhilsingh2764/invoice-processing-and-async-email-automation-api). Every protected route in the API (business, customers, products, invoices, dashboard) is guarded by the middleware described here.
+> **Note:** The live API runs on Render's free tier, so the first request after a period of inactivity can take a few seconds while the service wakes up.
 
 ---
 
-## 📑 Table of Contents
+## 📖 About
 
-- [Features](#-features)
-- [Tech Stack](#️-tech-stack)
-- [Architecture](#️-architecture)
-- [Authentication Flows](#-authentication-flows)
-- [Token & Cookie Design](#-token--cookie-design)
-- [API Endpoints](#-api-endpoints)
-- [Validation Rules](#-validation-rules)
-- [Data Models](#️-data-models)
-- [Redis Usage](#-redis-usage)
-- [Security Measures](#️-security-measures)
-- [Configuration](#️-configuration)
-- [Try It](#-try-it)
-- [Code Map](#-code-map)
-- [Hardening Roadmap](#️-hardening-roadmap)
+This is the authentication module of **InvoicePilot**, an invoice management platform. It handles everything about who a user is and whether they are allowed in: signup with email verification, login, Google sign-in, session refresh, password recovery, and account management.
+
+The main goal was to build it the way a real auth service is built, not as a simple login demo:
+
+- **Slow work never blocks a request.** OTP, welcome, and password-reset emails are sent by background workers (BullMQ on Redis) with automatic retries and exponential backoff, so the API answers immediately.
+- **Security is layered.** OTP email verification, bcrypt password hashing, short-lived JWT access tokens with rotating refresh tokens in HTTP-only cookies, account lockout, and Redis-backed rate limiting on every sensitive endpoint.
+- **It is observable and deployable.** Health probes, Prometheus metrics with a Grafana dashboard, Sentry error tracking, structured JSON logs, a Docker image, and a CI/CD pipeline that deploys to Render and verifies the release.
 
 ---
 
 ## ✨ Features
 
-- **Email signup with OTP verification.** An account is created only after the user proves they own the email address.
-- **Login with short-lived access tokens** and long-lived refresh tokens, both delivered as `HttpOnly` cookies, so JavaScript in the browser can never read them.
-- **Refresh-token rotation.** Each refresh issues a new pair and deletes the old refresh token from the database.
-- **Google sign-in.** The Google ID token is verified on the server, then the user is created or linked automatically.
-- **Password recovery by OTP**, plus authenticated password change.
-- **Account management:** profile read and update, deactivate, and permanent delete (with password confirmation).
-- **Redis-backed rate limiting** on the sensitive endpoints, so limits are shared across server instances.
-- **Background email delivery.** OTP and reset emails are queued in BullMQ, so signup never waits on an email provider.
+**Signup & verification**
+- Email signup with a 6-digit OTP sent by email
+- OTP stored in Redis with a 5-minute expiry and deleted after use
+- Accounts stay unverified, and cannot log in, until the OTP is confirmed
+- Welcome email sent after successful verification
 
----
+**Login & sessions**
+- Email and password login
+- Google sign-in with server-side verification of the Google ID token
+- 15-minute access token and 15-day refresh token, both in `HttpOnly`, `Secure` cookies
+- Refresh tokens stored server-side and rotated on every use
+- Logout that revokes the refresh token and clears cookies
 
-## 🛠️ Tech Stack
+**Account protection**
+- Account lockout for 15 minutes after 5 failed logins
+- Redis-backed rate limiting on signup, OTP verification, login, and token refresh
+- Forgot and reset password by OTP
+- Change password, update profile, deactivate account, delete account
 
-Only the pieces the auth system uses:
+**Async processing**
+- OTP, welcome, and password-reset emails sent through the Brevo API from a worker
+- Three retry attempts with exponential backoff for every email job
 
-| Concern | Technology | Role in auth |
-| --- | --- | --- |
-| **Runtime & framework** | Node.js 20, Express 5 | HTTP server, routing, middleware |
-| **Session tokens** | `jsonwebtoken` (JWT) | Signs and verifies access and refresh tokens |
-| **Password hashing** | `bcrypt` (10 salt rounds) | Stores and checks passwords |
-| **Social login** | `google-auth-library` | Verifies Google ID tokens |
-| **User database** | MongoDB + Mongoose | `User` and `RefreshToken` collections |
-| **Temporary state & cache** | Redis (`ioredis`) | OTP storage, profile cache, rate-limit counters |
-| **Rate limiting** | `express-rate-limit` + `rate-limit-redis` | Per-route limits stored in Redis |
-| **Email queue** | BullMQ | Delivers OTP and reset emails in the background |
-| **Email delivery** | Brevo transactional API | Sends the actual emails |
-| **Input validation** | `express-validator` | Validates every auth request body |
-| **Cookies & HTTP security** | `cookie-parser`, Helmet, CORS | Cookie handling, security headers, origin control |
-| **Logging** | Winston | Structured logs for auth events |
-| **Messages** | i18next (English and Hindi catalogs) | Translated error and success messages |
-| **API docs** | swagger-jsdoc, swagger-ui-express | Auth routes are documented with OpenAPI annotations |
+**Operations**
+- Health, liveness and readiness endpoints that check MongoDB and Redis
+- Prometheus metrics endpoint plus a Grafana container
+- Sentry error tracking and Winston structured logging
+- Graceful shutdown of the HTTP server, workers, Redis and MongoDB
+- Interactive API docs with Swagger UI (OpenAPI 3.0)
 
 ---
 
@@ -78,341 +77,456 @@ Only the pieces the auth system uses:
 
 ```mermaid
 flowchart LR
-    Client["Client<br/>browser or Postman"] -->|"HTTPS + cookies"| RL["Rate limiters<br/>(Redis store)"]
-    RL --> VAL["express-validator"]
-    VAL --> CTRL["Auth controllers"]
-    CTRL --> SVC["Auth services<br/>signup, login, refresh,<br/>Google, password"]
+    Client["Client<br/>React app or Postman"] -->|HTTPS + cookies| API["Express 5 API"]
 
-    SVC --> REPO["User and RefreshToken<br/>repositories"]
-    REPO --> MONGO[("MongoDB")]
+    API --> MW["Middleware<br/>Helmet, CORS, rate limiting,<br/>JWT auth, validation"]
+    MW --> CTRL["Controllers"]
+    CTRL --> SVC["Services"]
+    SVC --> REPO["Repositories"]
+    REPO --> DB[("MongoDB")]
 
-    SVC <-->|"OTPs, profile cache"| REDIS[("Redis")]
-    SVC -->|"enqueue OTP email"| QUEUE["BullMQ<br/>send-email queue"]
-    QUEUE --> WORKER["Email worker"] --> BREVO["Brevo API"]
+    SVC <-->|OTPs, rate limits| REDIS[("Redis")]
+    SVC -->|enqueue email jobs| QUEUES["BullMQ queue"]
+    QUEUES --> REDIS
+    QUEUES --> WORKERS["Email worker"]
+    WORKERS --> BREVO["Brevo email API"]
 
-    SVC -->|"verify ID token"| GOOGLE["Google OAuth"]
-
-    Client -->|"any protected route"| AUTHMW["authMiddleware<br/>verify JWT and load user"]
-    AUTHMW --> MONGO
+    API -.->|/metrics| PROM["Prometheus"] -.-> GRAF["Grafana"]
+    API -.->|errors| SENTRY["Sentry"]
 ```
 
-The auth code follows the same layers as the rest of the API: **routes → controllers → services → repositories → models**.
+The code follows a strict layered structure: **routes → controllers → services → repositories → models**. Controllers handle HTTP only, services hold the business logic, and repositories are the only layer that talks to MongoDB.
 
----
-
-## 🔄 Authentication Flows
-
-### 1. Signup with OTP verification
+### Example: signup and OTP email
 
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant A as API
     participant R as Redis
-    participant Q as BullMQ
-    participant E as Email worker
+    participant Q as BullMQ (Redis)
+    participant W as Email worker
+    participant B as Brevo
 
-    C->>A: POST /signup (username, email, password)
-    A->>A: Validate input, check email and username are free
-    A->>A: Hash the password with bcrypt
-    A->>R: Store OTP + signup data for 5 minutes
-    A->>Q: Queue the OTP email
+    C->>A: POST /api/v1/signup
+    A->>A: Hash password with bcrypt, create unverified user
+    A->>R: Store 6-digit OTP (5 min TTL)
+    A->>Q: Add job to send-email queue
     A-->>C: 201 OTP sent
-    Q->>E: Deliver job
-    E-->>C: Email with 6-digit OTP
-
-    C->>A: POST /verify-otp (email, otp)
-    A->>R: Read stored OTP data
-    A->>A: Compare OTP
-    A->>A: Create verified user in MongoDB
-    A->>R: Delete the OTP
-    A-->>C: 201 Account created
+    Q->>W: Deliver job
+    W->>B: Send OTP email
+    Note over W,Q: On failure the job is retried<br/>up to 3 times with exponential backoff
+    C->>A: POST /api/v1/verify-otp
+    A->>R: Compare OTP, then delete it
+    A->>A: Mark user verified
+    A->>Q: Add welcome email job
+    A-->>C: 201 Signup complete
 ```
 
-The user record is **not created until the OTP is verified**. The password is hashed before it is placed in Redis, so a plain-text password is never stored.
+### Background queue
 
-### 2. Login and authenticated requests
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant A as API
-    participant D as MongoDB
-
-    C->>A: POST /login (email, password)
-    A->>D: Find user by email
-    A->>A: Check verified and active, then bcrypt compare
-    A->>A: Sign access token and refresh token
-    A->>D: Save the refresh token
-    A-->>C: 200 + accessToken and refreshToken cookies
-
-    C->>A: GET /profile (cookies sent automatically)
-    A->>A: Verify access token signature and expiry
-    A->>D: Load the user, check the account is still active
-    A-->>C: 200 profile
-```
-
-An unknown email and a wrong password return the **same error message**, so the login endpoint does not reveal which emails are registered.
-
-### 3. Refresh-token rotation
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant A as API
-    participant D as MongoDB
-
-    C->>A: POST /refresh-token (refreshToken cookie)
-    A->>A: Verify refresh token signature and expiry
-    A->>D: Confirm the token exists in the database
-    A->>D: Confirm the user exists and is active
-    A->>D: Delete the old refresh token
-    A->>D: Save a new refresh token
-    A-->>C: 200 + new accessToken and refreshToken cookies
-```
-
-A refresh token is **single use**. Once it has been exchanged, or removed by logout, replaying it fails.
-
-### 4. Google sign-in
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant A as API
-    participant G as Google
-    participant D as MongoDB
-
-    C->>G: Sign in with Google
-    G-->>C: ID token
-    C->>A: POST /google (idToken)
-    A->>G: Verify token (audience = GOOGLE_CLIENT_ID)
-    A->>A: Require email_verified = true
-    alt New email
-        A->>D: Create user (provider GOOGLE, verified)
-    else Existing local account
-        A->>D: Link Google to the account
-    end
-    A-->>C: 200 + token cookies
-```
-
-### 5. Forgot and reset password
-
-1. `POST /forgot-password` with the email. The API generates a 6-digit OTP, stores it in Redis for 5 minutes, and queues the email.
-2. `POST /reset-password` with `email`, `otp`, `newPassword` and `confirmPassword`. The API checks the OTP, hashes the new password, saves it, and deletes the OTP.
-3. Google-only accounts are refused, because they have no password to reset.
-
----
-
-## 🍪 Token & Cookie Design
-
-| | Access token | Refresh token |
+| Queue | Purpose | Worker action |
 | --- | --- | --- |
-| **Purpose** | Authorizes API requests | Gets a new access token |
-| **Payload** | user `id`, `email` | user `id` |
-| **Signed with** | `ACCESS_TOKEN_SECRET` | `REFRESH_TOKEN_SECRET` (separate secret) |
-| **Lifetime** | Set by `ACCESS_TOKEN_EXPIRES_IN`; cookie lasts 15 minutes | Set by `REFRESH_TOKEN_EXPIRES_IN`; cookie and database record last 15 days |
-| **Stored server-side** | No (stateless) | Yes, in the `RefreshToken` collection |
-| **Cookie name** | `accessToken` | `refreshToken` |
+| `send-email` | OTP, welcome, and password-reset emails | Sends the email through Brevo |
 
-All auth cookies are set with:
-
-| Attribute | Value | Why |
-| --- | --- | --- |
-| `HttpOnly` | `true` | Blocks JavaScript access, which limits the damage of XSS |
-| `Secure` | `true` | Sent over HTTPS only |
-| `SameSite` | `None` | Allows the separately hosted frontend to call the API with credentials |
-
-Because the tokens travel in cookies, browser clients must send requests with credentials enabled (`credentials: "include"`), and the API's CORS setting only allows the origin in `CLIENT_URL`.
-
-**On every protected request** the middleware verifies the access token, then loads the user from the database and checks `isActive`. A deactivated or deleted account is therefore locked out immediately, even if its token has not expired yet.
+The queue uses 3 attempts with exponential backoff (5 s base delay) and keeps the last 100 completed and failed jobs. The worker processes up to 5 jobs concurrently. Workers start together with the API process, and `npm run worker` runs the email worker on its own.
 
 ---
 
-## 🔌 API Endpoints
+## 🗄️ Data Model
 
-Base path: `/api/v1`. Successful responses use `{ success, statuscode, message, data }`; errors use `{ success: false, message }`.
+Authentication uses two MongoDB collections. OTPs and rate-limit counters live in Redis, not in MongoDB.
 
-| Method | Endpoint | Auth | Rate limit (per client IP) | Purpose |
-| --- | --- | --- | --- | --- |
-| POST | `/signup` | No | 30 / hour | Start signup and send an OTP |
-| POST | `/verify-otp` | No | 30 / 15 min | Verify the OTP and create the account |
-| POST | `/login` | No | 15 / min | Log in and set cookies |
-| POST | `/google` | No | none yet | Sign in with a Google ID token |
-| POST | `/refresh-token` | Refresh cookie | 30 / min | Rotate tokens |
-| POST | `/forgot-password` | No | 3 / 15 min | Send a password-reset OTP |
-| POST | `/reset-password` | No | 30 / 15 min | Reset the password with the OTP |
-| GET | `/profile` | Yes | 200 / 15 min | Get the current user (cached) |
-| POST | `/logout` | Yes | none | Delete the refresh token and clear cookies |
-| PATCH | `/update-profile` | Yes | 200 / 15 min | Change username |
-| PATCH | `/change-password` | Yes | 200 / 15 min | Change password (needs the old one) |
-| PATCH | `/deactivate-account` | Yes | 200 / 15 min | Deactivate the account |
-| DELETE | `/delete-account` | Yes | 200 / 15 min | Permanently delete (needs the password) |
+```mermaid
+erDiagram
+    USER ||--o{ REFRESHTOKEN : sessions
 
-Full request and response schemas are in the Swagger UI at `/api-docs`.
+    USER {
+        string username
+        string email
+        string password
+        boolean isVerified
+        boolean isActive
+        int failedLoginAttempts
+        date lockUntil
+    }
 
----
+    REFRESHTOKEN {
+        objectId userId
+        string token
+        date expiresAt
+    }
+```
 
-## ✅ Validation Rules
-
-All request bodies are validated with `express-validator` before they reach a controller.
-
-| Field | Rule |
+| Field | Purpose |
 | --- | --- |
-| **Username** | 3 to 30 characters; letters, numbers and underscores only |
-| **Email** | Valid email format, trimmed, lower-cased and normalized |
-| **Password** | At least 8 characters, with one uppercase letter, one lowercase letter, one number, and one special character from `@ $ ! % * ? &` |
-| **OTP** | Exactly 6 digits, numbers only |
-| **Reset password** | `confirmPassword` must match `newPassword` |
+| `password` | bcrypt hash, never the plain password |
+| `isVerified` | Becomes `true` only after the signup OTP is confirmed |
+| `isActive` | Set to `false` when the account is deactivated |
+| `failedLoginAttempts`, `lockUntil` | Drive the 5-failures, 15-minute lockout |
+| `REFRESHTOKEN.token` | Server-side copy used to validate and revoke sessions |
+| `REFRESHTOKEN.expiresAt` | Expiry of the refresh token |
 
 ---
 
-## 🗄️ Data Models
+## 🗺️ Route Flow (all auth endpoints)
 
-**User**
+A single journey through every auth route in the order a real client calls them — sign up, verify, log in, keep the session alive, recover a password, and manage the account. Each step carries its rate limiter and its Redis/BullMQ behavior.
 
-| Field | Type | Notes |
+```mermaid
+flowchart TD
+    Start(["📱 Client"]) --> Signup["POST /signup<br/>signupLimiter"]
+    Signup --> SignupSvc["Hash password · create unverified user<br/>generate 6-digit OTP → Redis, 5 min TTL<br/>enqueue OTP email job"]
+    SignupSvc --> OTPSent(["201 OTP sent"])
+
+    OTPSent --> Verify["POST /verify-otp<br/>verifyOtpLimiter"]
+    Verify --> VerifyCheck{"OTP matches<br/>and not expired?"}
+    VerifyCheck -->|No| VerifyFail(["400 Invalid/expired OTP"])
+    VerifyFail --> Verify
+    VerifyCheck -->|Yes| VerifySvc["Mark user verified<br/>enqueue welcome email job"]
+    VerifySvc --> SignupDone(["201 Signup complete"])
+
+    SignupDone --> Login["POST /login<br/>loginLimiter"]
+    Login --> LoginCheck{"Verified, active,<br/>password correct?"}
+    LoginCheck -->|No, 5th fail| Lockout(["403 Account locked 15 min"])
+    LoginCheck -->|No| LoginFail(["401 Invalid credentials"])
+    LoginFail --> Login
+    LoginCheck -->|Yes| Tokens["Issue access token 15m<br/>+ rotating refresh token 15d<br/>→ HttpOnly Secure cookies"]
+    GoogleLogin["POST /google<br/>Verify Google ID token"] --> Tokens
+    Tokens --> LoggedIn(["200 Logged in"])
+
+    LoggedIn --> Refresh["POST /refresh-token<br/>refreshTokenLimiter<br/>rotates refresh cookie on every call"]
+    LoggedIn --> Profile["GET /profile · PATCH /update-profile<br/>PATCH /change-password<br/>🔒 authMiddleware"]
+    LoggedIn --> Forgot["POST /forgot-password → OTP email<br/>POST /reset-password → verify OTP, set password"]
+    LoggedIn --> Account["PATCH /deactivate-account<br/>DELETE /delete-account<br/>🔒 authMiddleware"]
+    LoggedIn --> Logout["POST /logout<br/>revokes refresh token, clears cookies"]
+
+    Start -.->|monitoring| Ops["GET /health · /health/live · /health/ready · /metrics<br/>no auth required"]
+
+    classDef terminal fill:#000000,stroke:#333,color:#fff
+    classDef decision fill:#DC382D,stroke:#333,color:#fff
+    class OTPSent,SignupDone,LoggedIn,Lockout terminal
+    class VerifyCheck,LoginCheck decision
+```
+
+**How to read it for an interview walkthrough:**
+- Follow the main path: `signup → verify-otp → login → refresh-token`. OTPs live in Redis with a 5-minute TTL, tokens live in HttpOnly cookies, and refresh tokens rotate on every use.
+- The branch diamonds (`OTP valid?`, `login valid?`) are the actual conditional logic in the services, useful for explaining lockouts and expiry.
+- Every sensitive route carries its own Redis-backed rate limiter, so limits hold even if the API scales to multiple instances.
+
+---
+
+## 🛠️ Tech Stack
+
+| Category | Technologies |
+| --- | --- |
+| **Runtime & framework** | Node.js 20, Express 5 (ES modules) |
+| **Database** | MongoDB with Mongoose 9 |
+| **Cache & queues** | Redis (ioredis), BullMQ |
+| **Auth & security** | JWT, bcrypt, Helmet, CORS, express-rate-limit with rate-limit-redis, Google OAuth (google-auth-library) |
+| **Validation** | express-validator |
+| **Email** | Brevo transactional email API |
+| **Observability** | Winston, Morgan, Sentry, Prometheus (prom-client), Grafana |
+| **API docs** | swagger-jsdoc, swagger-ui-express |
+| **i18n** | i18next with English and Hindi message catalogs |
+| **DevOps** | Docker, Docker Compose, GitHub Actions, Render |
+| **Tooling** | Git, Postman, Nodemon |
+
+---
+
+## 📁 Project Structure
+
+```text
+.
+├── .github/workflows/ci.yml        # CI/CD pipeline
+└── Backend/
+    ├── Dockerfile
+    ├── docker-compose.yml          # API + Redis + MongoDB + Prometheus + Grafana
+    ├── prometheus/prometheus.yml
+    ├── .env.example
+    └── src/
+        ├── server.js               # Startup, workers, graceful shutdown
+        ├── app.js                  # Middleware and route registration
+        ├── config/                 # db, redis, sentry, swagger, metrics, i18n
+        ├── route/                  # Routes with Swagger annotations
+        ├── controller/             # HTTP layer
+        ├── service/                # Business logic (OTP, login, tokens)
+        ├── repository/             # Database access
+        ├── model/                  # Mongoose schemas (user, refresh token)
+        ├── validators/             # express-validator rules
+        ├── middleware/             # auth, rate limiters, errors, metrics, logging
+        ├── queues/                 # BullMQ queue definitions
+        ├── worker/                 # BullMQ email worker
+        ├── templates/              # HTML email templates
+        ├── locales/                # en and hi translations
+        └── utils/                  # logger, ApiError, token helpers
+```
+
+---
+
+## 🔌 API Reference
+
+Base path: `/api/v1`. Interactive documentation is available at `/api-docs`.
+
+<details open>
+<summary><b>Authentication</b></summary>
+
+| Method | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `/signup` | No | Start signup and send an OTP by email |
+| POST | `/verify-otp` | No | Verify the OTP and activate the account |
+| POST | `/login` | No | Log in and set access and refresh cookies |
+| POST | `/google` | No | Sign in with a Google ID token |
+| POST | `/refresh-token` | Cookie | Rotate the refresh token and issue new tokens |
+| POST | `/forgot-password` | No | Send a password-reset OTP |
+| POST | `/reset-password` | No | Reset the password with the OTP |
+| GET | `/profile` | Yes | Get the current user |
+| POST | `/logout` | Yes | Log out and revoke the refresh token |
+| PATCH | `/update-profile` | Yes | Update profile details |
+| PATCH | `/change-password` | Yes | Change password |
+| PATCH | `/deactivate-account` | Yes | Deactivate the account |
+| DELETE | `/delete-account` | Yes | Delete the account |
+
+</details>
+
+<details>
+<summary><b>Operations</b></summary>
+
+| Method | Endpoint | Description |
 | --- | --- | --- |
-| `username` | String | Unique, 3 to 30 characters |
-| `email` | String | Unique, stored lower-case |
-| `password` | String | bcrypt hash; excluded from queries by default; required only for `LOCAL` accounts |
-| `provider` | `LOCAL` or `GOOGLE` | How the account signs in |
-| `googleId` | String | Set for Google accounts |
-| `isVerified` | Boolean | `true` after OTP or Google verification |
-| `isActive` | Boolean | `false` after deactivation |
-| `failedLoginAttempts`, `lockUntil` | Number, Date | Failed-login tracking fields |
-| `createdAt`, `updatedAt` | Date | Timestamps |
+| GET | `/health` | Full health check (API, MongoDB, Redis) |
+| GET | `/health/live` | Liveness probe |
+| GET | `/health/ready` | Readiness probe (returns `503` when a dependency is down) |
+| GET | `/metrics` | Prometheus metrics |
 
-**RefreshToken**
+</details>
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `userId` | ObjectId → User | Owner of the token |
-| `token` | String | The refresh JWT |
-| `expiresAt` | Date | 15 days after issue |
+---
+
+## 🔐 Security
+
+| Area | Implementation |
+| --- | --- |
+| **Password storage** | bcrypt hashing with salt |
+| **Email verification** | 6-digit OTP stored in Redis with a 5-minute expiry; the account cannot log in until it is verified |
+| **Sessions** | 15-minute access token and 15-day refresh token, both in `HttpOnly`, `Secure` cookies |
+| **Refresh tokens** | Stored server-side and rotated on every use, so a used or revoked token stops working |
+| **Brute-force protection** | Account locks for 15 minutes after 5 failed logins, plus per-route rate limiting |
+| **Rate limiting** | Redis-backed limiters for login, signup, OTP, password reset, and token refresh, so limits hold across multiple server instances |
+| **Data isolation** | Every repository query is scoped by the authenticated user's ID |
+| **HTTP hardening** | Helmet headers, CORS restricted to `CLIENT_URL` with credentials, `trust proxy` for deployment behind a load balancer |
+| **Input validation** | express-validator rules on every write endpoint |
+| **Errors** | One central error handler returns clean JSON to clients while stack traces go to logs and Sentry |
+
+### Authentication flow
+
+The four steps a client goes through: **signup → verify OTP → login → refresh token**. Every protected route afterwards is checked by `authMiddleware`, and every database query is scoped to `req.user._id`.
+
+```mermaid
+flowchart TD
+    Client(["📱 Client"])
+    Client -->|"1 . credentials"| Signup["POST /signup"]
+    Client -->|"2 . OTP"| VerifyOtp["POST /verify-otp"]
+    Client -->|"3 . credentials"| Login["POST /login"]
+    Client -->|"4 . expired access token"| Refresh["POST /refresh-token"]
+
+    %% 1. Signup
+    Signup --> Hash["bcrypt hash password<br/>create unverified user"]
+    Hash --> GenOtp["Generate 6-digit OTP<br/>store in Redis, 5 min TTL"]
+    GenOtp --> QueueOtp["Queue OTP email job → Brevo"]
+
+    %% 2. Verify OTP
+    VerifyOtp --> OtpValid{"OTP valid<br/>and not expired?"}
+    OtpValid -->|No| OtpRejected(["400 rejected"])
+    OtpValid -->|Yes| MarkVerified["Mark user verified"]
+
+    %% 3. Login
+    Login --> IsLocked{"Locked?<br/>5 failed logins → 15 min lock"}
+    IsLocked -->|Yes| LoginLocked(["403 locked"])
+    IsLocked -->|No| Compare["bcrypt compare password"]
+    Compare -->|Fail| Increment["Increment failed-attempt<br/>counter"]
+    Increment --> LoginInvalid(["401 invalid"])
+    Compare -->|Match| Issuance
+
+    %% 4. Refresh
+    Refresh --> ValidateRefresh["Validate refresh token<br/>against DB record<br/>issue new access + refresh token<br/>old refresh token is revoked"]
+    ValidateRefresh --> Issuance
+
+    subgraph Issuance["Token issuance"]
+        direction TB
+        Access["Access token<br/>JWT · 15 min · HttpOnly Secure cookie"]
+        RefreshToken["Refresh token<br/>JWT · 15 days · HttpOnly Secure cookie<br/>+ stored server-side in MongoDB"]
+    end
+
+    Issuance --> AuthMw["Every protected route<br/>🔒 authMiddleware verifies<br/>access-token cookie"]
+    AuthMw --> RateLimit["Redis-backed rate limiter per route:<br/>login, signup, OTP, password reset,<br/>token refresh"]
+    AuthMw --> Scoped["Every DB query scoped to<br/>authMiddleware's req.user._id"]
+
+    classDef error fill:#DC382D,stroke:#333,color:#fff
+    classDef success fill:#16A34A,stroke:#333,color:#fff
+    class OtpRejected,LoginLocked,LoginInvalid error
+    class MarkVerified,Issuance success
+```
 
 ---
 
 ## ⚡ Redis Usage
 
-| Purpose | Key | TTL |
-| --- | --- | --- |
-| Signup OTP and pending account data | `otp:EMAIL_VERIFICATION:{email}` | 5 minutes |
-| Password-reset OTP | `otp:PASSWORD_RESET:{email}` | 5 minutes |
-| Cached profile | `profile:{userId}` | 5 minutes (cleared on profile update and account deletion) |
-| Rate-limit counters | `login:`, `signup:`, `verifyOtp:`, `forgotPassword:`, `refreshToken:`, `api:` prefixes | Per limiter window |
+| Data | Redis key | TTL | Invalidation |
+| --- | --- | --- | --- |
+| Signup and reset OTP | `otp:{type}:{email}` | 5 min | Deleted after verification |
+| Rate-limit counters | Managed by `rate-limit-redis` | Per limiter window | Expire by window |
+| BullMQ email jobs | Managed by BullMQ | Last 100 completed and failed jobs kept | Automatic |
 
 ---
 
-## 🛡️ Security Measures
+## 📊 Observability
 
-| Measure | How it works |
-| --- | --- |
-| **Password hashing** | bcrypt with 10 salt rounds; the hash is never returned by queries by default |
-| **No plain-text passwords in Redis** | The signup password is hashed before it is stored alongside the OTP |
-| **Email ownership check** | Accounts are created only after a valid OTP; OTPs expire after 5 minutes and are deleted after use |
-| **Token separation** | Access and refresh tokens use different secrets |
-| **Token theft resistance** | `HttpOnly`, `Secure` cookies; refresh tokens are single use and stored server-side |
-| **Instant revocation** | Every request re-checks the user's `isActive` status in the database |
-| **Login error hygiene** | Unknown email and wrong password produce the same message |
-| **Rate limiting** | Redis-backed limits on signup, OTP, login, password reset and token refresh, shared across instances |
-| **Google verification** | ID token verified server-side against the configured client ID, and the Google email must be verified |
-| **Input validation** | Strict rules on every request body, including a strong password policy |
-| **Protected destructive actions** | Deleting an account and changing a password both require the current password |
-| **Transport and headers** | Helmet, CORS limited to `CLIENT_URL`, and HTTPS-only cookies |
-| **Audit trail** | Login, logout, failed attempts, token rotation and account changes are logged with Winston |
+- **Health:** `/api/v1/health`, `/health/live` and `/health/ready` for Docker, Kubernetes, and uptime monitors
+- **Metrics:** `/api/v1/metrics` exposes default Node.js metrics, `http_requests_total`, and the `http_request_duration_seconds` histogram, labelled by method, route and status code
+- **Dashboards:** Prometheus and Grafana run alongside the API in Docker Compose
+- **Errors:** unhandled errors are captured in Sentry
+- **Logs:** Winston writes structured JSON to the console and to `logs/app.log` and `logs/error.log`
 
 ---
 
-## ⚙️ Configuration
+## 🚀 Getting Started
 
-| Variable | Purpose |
+### Prerequisites
+
+- Node.js 20 or later
+- MongoDB (Atlas or local)
+- Redis 7 or later
+- A [Brevo](https://www.brevo.com/) account and API key for OTP and password-reset emails
+- A Google OAuth client ID if you want Google sign-in
+
+### Run locally
+
+```bash
+git clone https://github.com/nikhilsingh2764/invoice-processing-and-async-email-automation-api.git
+cd invoice-processing-and-async-email-automation-api/Backend
+
+cp .env.example .env      # then fill in your values
+npm install
+npm run dev               # API and workers on http://localhost:8000
+```
+
+### Run with Docker
+
+```bash
+cd Backend
+cp .env.example .env      # required, the compose file reads it
+docker compose up --build
+```
+
+| Service | URL |
 | --- | --- |
-| `ACCESS_TOKEN_SECRET` | Signs access tokens |
-| `ACCESS_TOKEN_EXPIRES_IN` | Access token lifetime, for example `15m` |
-| `REFRESH_TOKEN_SECRET` | Signs refresh tokens (use a different value) |
-| `REFRESH_TOKEN_EXPIRES_IN` | Refresh token lifetime, for example `15d` |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID used to verify ID tokens |
+| API | http://localhost:8000 |
+| Swagger docs | http://localhost:8000/api-docs |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 |
+
+The compose file overrides `REDIS_URL` and `MONGODB_URI` to point at its own containers. On macOS or Windows, change the Prometheus target in `prometheus/prometheus.yml` from `172.17.0.1:8000` to `host.docker.internal:8000`.
+
+### Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Start the API and workers with Nodemon |
+| `npm start` | Start the API and workers (production) |
+| `npm run worker` | Run the email worker as a standalone process |
+
+### Environment variables
+
+| Variable | Description |
+| --- | --- |
+| `PORT` | Server port (default `8000` in Docker) |
+| `NODE_ENV` | `development` or `production` |
 | `MONGODB_URI` | MongoDB connection string |
-| `REDIS_URL` | Redis connection string (OTPs, cache, rate limits, queue) |
-| `BREVO_API_KEY` | Brevo API key for sending OTP emails |
-| `EMAIL_USER` | Verified sender address in Brevo |
+| `REDIS_URL` | Redis connection string |
 | `CLIENT_URL` | Frontend origin allowed by CORS |
+| `ACCESS_TOKEN_SECRET` | Secret for signing access tokens |
+| `ACCESS_TOKEN_EXPIRES_IN` | Access token lifetime, for example `15m` |
+| `REFRESH_TOKEN_SECRET` | Secret for signing refresh tokens |
+| `REFRESH_TOKEN_EXPIRES_IN` | Refresh token lifetime, for example `15d` |
+| `BREVO_API_KEY` | Brevo API key for sending email |
+| `EMAIL_USER` | Verified sender address in Brevo |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `SENTRY_DSN` | Sentry project DSN (optional) |
 
-Generate long random secrets, for example:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-```
-
-Never commit your `.env` file.
-
----
-
-## 🧪 Try It
-
-Replace `BASE` with your server, for example `http://localhost:8000/api/v1` or the live API. Cookies are saved to a jar file so later requests stay logged in.
-
-> `Secure` cookies need HTTPS. Browsers and Postman handle `localhost`, but `curl` over plain `http://` may not store them, so use Postman locally or test against an HTTPS URL.
-
-```bash
-BASE=https://invoice-backend-drqr.onrender.com/api/v1
-
-# 1. Sign up (an OTP is emailed to you)
-curl -X POST $BASE/signup \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo_user","email":"you@example.com","password":"Str0ng@Pass"}'
-
-# 2. Verify the OTP from your inbox
-curl -X POST $BASE/verify-otp \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@example.com","otp":"123456"}'
-
-# 3. Log in and save the cookies
-curl -c cookies.txt -X POST $BASE/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@example.com","password":"Str0ng@Pass"}'
-
-# 4. Call a protected route
-curl -b cookies.txt $BASE/profile
-
-# 5. Rotate tokens
-curl -b cookies.txt -c cookies.txt -X POST $BASE/refresh-token
-
-# 6. Log out
-curl -b cookies.txt -X POST $BASE/logout
-```
-
-A ready-made request set is also available in the [Postman collection](https://www.postman.com/technical-physicist-35686083-s-team/workspace/invoice-generator-api/collection/39798617-83cff721-5ce7-4e00-ba58-0d49017d3f39?action=share&creator=39798617).
+Use long, random values for the token secrets and never commit your `.env` file.
 
 ---
 
-## 🗂️ Code Map
+## 🔄 CI/CD
 
-```text
-Backend/src/
-├── route/auth/           user.routes.js, token.routes.js
-├── controller/auth/      user.controller.js, token.controller.js, googleAuth.controller.js
-├── service/auth/         auth.service.js, refreshToken.service.js,
-│                         otp.service.js, googleAuth.service.js, email.service.js
-├── repository/auth/      user.repository.js, refreshToken.repository.js, otp.repository.js
-├── model/auth/           auth.model.js (User), refreshToken.model.js
-├── middleware/           auth.middleware.js, rateLimiter.middleware.js, validate.js
-├── validators/           auth.validator.js
-├── utils/                generateToken.js, generateOTP.js, googleVerify.js, cookieOptions.js
-├── queues/ + worker/     email.queue.js, email.worker.js
-└── templates/            otp, welcome, and reset-password email templates
+Every push and pull request to `main` runs the pipeline in [`.github/workflows/ci.yml`](.github/workflows/ci.yml). A push to `main` also triggers a Render deploy and verifies the live API. The right-hand side of the diagram shows the Docker Compose stack used for local and self-hosted runs.
+
+```mermaid
+flowchart LR
+    Push(["👨‍💻 git push to main"]) --> GHA["GitHub Actions<br/>Invoice API CI"]
+
+    subgraph CI["CI pipeline"]
+        direction TB
+        Checkout["Checkout code"] --> Setup["Setup Node.js 20 · npm ci"]
+        Setup --> Build["Build Docker image"]
+        Build --> Inspect["Inspect image"]
+        Inspect --> Validate["docker compose config<br/>validate compose file"]
+    end
+
+    GHA --> Checkout
+    Validate -->|push to main only| Deploy["Trigger Render<br/>deploy hook"]
+    Deploy --> Wait["Wait ~60s for rollout"]
+    Wait --> Health["curl --fail<br/>/api/v1/health"]
+    Health -->|200| Live(["✅ Live on Render"])
+    Health -->|fail| Failed(["❌ Pipeline fails"])
+
+    subgraph Compose["docker-compose.yml — local & self-hosted stack"]
+        direction TB
+        Grafana["grafana/grafana"] -->|dashboards| Prom["prom/prometheus"]
+        Prom -.->|scrapes /metrics| Api["api<br/>Node 20 / Express 5"]
+        Api --> Redis[("redis:7-alpine")]
+        Api --> Mongo[("mongo:8")]
+    end
+
+    Live -.-> Grafana
+
+    classDef ok fill:#16A34A,stroke:#333,color:#fff
+    classDef bad fill:#DC2626,stroke:#333,color:#fff
+    class Live ok
+    class Failed bad
 ```
+
+The pipeline fails if the image does not build or if the deployed API does not answer its health endpoint.
 
 ---
 
-## 🗺️ Hardening Roadmap
+## 🧠 Design Decisions
 
-Planned improvements to take the system from solid to production-grade:
+- **Queue instead of inline work:** third-party email calls are slow and can fail. Moving them to BullMQ keeps API latency low and gives retries and backoff for free.
+- **OTP in Redis, not MongoDB:** OTPs are short-lived by nature, so a Redis key with a 5-minute TTL expires on its own and needs no cleanup job.
+- **Rotating refresh tokens:** every refresh issues a new token and revokes the old one, so a stolen token that has already been used stops working.
+- **Tokens in HttpOnly cookies:** JavaScript on the page cannot read them, which reduces the damage of an XSS bug.
+- **Lockout on top of rate limiting:** rate limiting slows down bursts from one client, while the account lockout protects a single account from slow, distributed guessing.
+- **Repository layer:** database access lives in one place, which keeps services testable and makes the user-scoping rule easy to enforce.
+- **Redis for shared state:** rate limits and OTPs live in Redis, so the API can run as several instances without losing consistency.
+- **Graceful shutdown:** on shutdown the server stops taking requests, lets workers finish, then closes Redis and MongoDB.
 
-- [ ] **Enforce the login lock window.** The `failedLoginAttempts` and `lockUntil` fields are already modelled and updated; add the check that rejects logins while `lockUntil` is in the future
-- [ ] **Persist Google-issued refresh tokens** so Google sessions can rotate like password sessions
-- [ ] **Revoke all refresh tokens** on password change, password reset, and account deactivation
-- [ ] **TTL index on `RefreshToken.expiresAt`** to purge expired records, and store token hashes instead of raw tokens
-- [ ] **Cryptographically secure OTPs** (`crypto.randomInt`) with a per-email attempt limit
-- [ ] **Rate limiting and validation on `/google`**
-- [ ] **Automated tests** (Jest and Supertest) for every flow above
+---
+
+## 🗺️ Roadmap
+
+- [ ] Automated tests (Jest and Supertest) for the auth flows, wired into the CI pipeline
+- [ ] Bull Board dashboard for monitoring the email queue and failed jobs
+
+---
+
+## 👨‍💻 Author
+
+**Nikhil Singh**, Backend Engineer
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/nikhil-singh-802594231/)
+[![Email](https://img.shields.io/badge/Email-D14836?style=flat&logo=gmail&logoColor=white)](mailto:nikhilsingh2764@gmail.com)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?style=flat&logo=github&logoColor=white)](https://github.com/nikhilsingh2764)
+
+If you found this project useful, consider giving it a ⭐
